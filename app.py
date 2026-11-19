@@ -1,35 +1,37 @@
+from pathlib import Path
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 st.set_page_config(page_title='K–12 AI Policy Evidence Lab', layout='wide')
 st.title('K–12 AI Policy Evidence Lab')
-st.caption('Exploratory dashboard • Forum-discourse corpus, not a representative public-opinion survey. Verify source provenance before publishing findings.')
+st.caption('Exploratory dashboard covering video sources, community discourse, and public hearings. Verify source provenance before publishing findings.')
 
 @st.cache_data
 def load_data():
-    d = pd.read_csv('expanded_social_discourse_corpus.csv')
+    d = pd.read_csv(Path(__file__).with_name('master_k12_ai_combined_dataset.csv'))
     d['date'] = pd.to_datetime(d['date'], errors='coerce')
-    for col in ['valence', 'arousal', 'stance_confidence']:
+    for col in ['valence', 'arousal']:
         d[col] = pd.to_numeric(d[col], errors='coerce')
     return d
 
 df = load_data()
-st.sidebar.header('Filter comments')
+st.sidebar.header('Filter entries')
 selected_groups = st.sidebar.multiselect('Stakeholder group', sorted(df['stakeholder_group'].dropna().unique()), default=sorted(df['stakeholder_group'].dropna().unique()))
 selected_aspects = st.sidebar.multiselect('Policy aspect', sorted(df['policy_aspect'].dropna().unique()))
 selected_stances = st.sidebar.multiselect('Macro stance', sorted(df['macro_stance'].dropna().unique()))
-search = st.sidebar.text_input('Search comment text')
+search = st.sidebar.text_input('Search summaries and quotes')
 f = df[df['stakeholder_group'].isin(selected_groups)].copy()
 if selected_aspects:
     f = f[f['policy_aspect'].isin(selected_aspects)]
 if selected_stances:
     f = f[f['macro_stance'].isin(selected_stances)]
 if search:
-    f = f[f['text_content'].fillna('').str.contains(search, case=False, regex=False)]
+    f = f[f['summary_or_quote'].fillna('').str.contains(search, case=False, regex=False)]
 
 if f.empty:
-    st.warning('No comments match the current filters.')
+    st.warning('No entries match the current filters.')
     st.stop()
 
 n1,n2,n3 = st.columns(3)
@@ -53,12 +55,16 @@ with overview:
         st.plotly_chart(px.bar(topic_counts, x='count', y='aspect', orientation='h', labels={'aspect':'Policy aspect'}).update_layout(yaxis={'categoryorder':'total ascending'}),use_container_width=True)
     with c2:
         st.subheader('Emotional tone')
-        st.plotly_chart(px.scatter(f,x='valence',y='arousal',color='stakeholder_group',hover_data=['id','policy_aspect','macro_stance'],opacity=.65),use_container_width=True)
+        st.plotly_chart(px.scatter(f,x='valence',y='arousal',color='stakeholder_group',hover_data=['master_id','policy_aspect','macro_stance'],opacity=.65),use_container_width=True)
     st.info('Percentages describe entries in the filtered corpus, not percentages of U.S. teachers, students, or parents.')
 with evidence:
     st.subheader('Searchable source evidence')
     st.caption('Some source URLs or excerpts may be synthetic or adapted. Do not present them as verified quotations without checking provenance.')
-    show_cols=['id','date','stakeholder_group','policy_aspect','macro_stance','primary_emotion','valence','arousal','text_content','source_url']
+    show_cols = [
+        'master_id', 'date', 'source_modality', 'stakeholder_group', 'policy_aspect',
+        'macro_stance', 'primary_emotion', 'valence', 'arousal', 'summary_or_quote',
+        'key_context_or_rationale', 'source_url',
+    ]
     st.dataframe(f[show_cols].sort_values('date',ascending=False),use_container_width=True,hide_index=True,column_config={'source_url':st.column_config.LinkColumn('Source URL')})
     st.download_button('Export filtered entries (CSV)',f[show_cols].to_csv(index=False).encode('utf-8'),'filtered_evidence.csv','text/csv')
 with policy:
@@ -85,8 +91,8 @@ with methods:
 
 ### Important limitations
 - The corpus is not a probability sample of U.S. public opinion.
-- Multiple entries may come from the same person or thread.
-- Verify whether comments are authentic, adapted, or synthetic and validate original links before quoting.
+- Multiple entries may come from the same speaker, event, or thread.
+- Check summaries and quotes against their original sources before citing them.
 - Check the quality and consistency of stakeholder, stance, and emotion labels.
 - A topic mention does not establish support for a specific policy.
 ''')

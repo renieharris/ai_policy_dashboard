@@ -6,4 +6,4 @@
 4. Run `py -m streamlit run app.py` on Windows (or `python -m streamlit run app.py`).
 5. Open the local URL printed in the terminal.
 
-The app includes filtering, interactive charts, a comment table, CSV export, and a basic proposed-policy selector. Policy provisions are examples and are **not** yet linked to human-verified evidence. The source data's provenance should be validated before public claims or quotation.
+The app loads `master_k12_ai_combined_dataset.csv` and includes filtering, interactive charts, a source evidence table, CSV export, and a basic proposed-policy selector. Policy provisions are examples and are **not** yet linked to human-verified evidence. The source data's provenance should be validated before public claims or quotation.
