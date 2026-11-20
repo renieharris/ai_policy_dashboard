@@ -1,9 +1,12 @@
+from io import BytesIO
 from pathlib import Path
 from textwrap import wrap
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from matplotlib.figure import Figure
+from matplotlib.ticker import PercentFormatter
 
 st.set_page_config(page_title='K–12 AI Policy Evidence Lab', layout='wide', initial_sidebar_state='auto')
 st.markdown(
@@ -107,9 +110,10 @@ STANCE_LEGEND_LABELS = {
     'Regulatory / Labor Protection & Worker Voice': 'Educator voice',
     'Skeptical / Ambivalent': 'Skeptical',
 }
+STANCE_CHART_COLORS = dict(zip(STANCE_LEGEND_LABELS.values(), px.colors.qualitative.Plotly))
 
 
-def show_chart(figure):
+def show_chart(figure, *, display_mode_bar='hover'):
     figure.update_layout(
         margin=dict(l=0, r=12, t=12, b=0),
         legend=dict(orientation='h', title_text='', y=-0.2, yanchor='top'),
@@ -117,8 +121,26 @@ def show_chart(figure):
     st.plotly_chart(
         figure,
         use_container_width=True,
-        config={'responsive': True, 'scrollZoom': False},
+        config={'responsive': True, 'scrollZoom': False, 'displayModeBar': display_mode_bar},
     )
+
+
+@st.cache_data
+def stance_chart_pdf(shares, colors):
+    figure = Figure(figsize=(11.7, 7), layout='constrained')
+    axes = figure.subplots()
+    left = [0.0] * len(shares.index)
+    for stance, color in colors:
+        values = shares[stance]
+        axes.barh(shares.index, values, left=left, color=color, label=stance)
+        left = [start + value for start, value in zip(left, values)]
+    axes.invert_yaxis()
+    axes.set(xlim=(0, 1), xlabel='Share of entries', title='Policy stances by stakeholder')
+    axes.xaxis.set_major_formatter(PercentFormatter(xmax=1))
+    axes.legend(loc='upper center', bbox_to_anchor=(0.5, -0.14), ncols=2, frameon=False)
+    output = BytesIO()
+    figure.savefig(output, format='pdf')
+    return output.getvalue()
 
 @st.cache_data
 def load_data():
@@ -168,13 +190,20 @@ with overview:
     counts['chart_group'] = counts['stakeholder_group'].map(lambda label: '<br>'.join(wrap(label, width=15)))
     fig = px.bar(
         counts, x='share', y='chart_group', color='chart_stance', orientation='h',
-        barmode='stack', height=420,
+        barmode='stack', height=420, color_discrete_map=STANCE_CHART_COLORS,
         hover_data={'chart_group': False, 'chart_stance': False, 'macro_stance': True, 'stakeholder_group': True, 'count': True},
         labels={'share': 'Share of entries', 'stakeholder_group': 'Stakeholder', 'macro_stance': 'Macro stance'},
     )
     fig.update_xaxes(tickformat='.0%', nticks=5)
-    fig.update_yaxes(title_text=None, autorange='reversed')
-    show_chart(fig)
+    fig.update_yaxes(title_text=None, autorange='reversed', categoryorder='array', categoryarray=counts['chart_group'].unique())
+    shares = counts.pivot(index='stakeholder_group', columns='chart_stance', values='share').fillna(0)
+    st.download_button(
+        'Download as a PDF',
+        data=stance_chart_pdf(shares, [(trace.name, trace.marker.color) for trace in fig.data]),
+        file_name='policy-stances-by-stakeholder.pdf',
+        mime='application/pdf',
+    )
+    show_chart(fig, display_mode_bar=False)
     c1,c2=st.columns(2)
     with c1:
         st.subheader('Policy aspects mentioned')
