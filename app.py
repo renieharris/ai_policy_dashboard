@@ -6,12 +6,15 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from matplotlib.figure import Figure
-from matplotlib.ticker import PercentFormatter
+from matplotlib.ticker import MaxNLocator, PercentFormatter
 
 st.set_page_config(page_title='K–12 AI Policy Evidence Lab', layout='wide', initial_sidebar_state='auto')
 st.markdown(
     """
     <style>
+    .st-key-pdf-only-charts [data-testid="stElementToolbar"] {
+        display: none;
+    }
     @media (max-width: 768px) {
         [data-testid="stMainBlockContainer"] {
             padding-inline: clamp(0.75rem, 4vw, 1.5rem);
@@ -113,7 +116,7 @@ STANCE_LEGEND_LABELS = {
 STANCE_CHART_COLORS = dict(zip(STANCE_LEGEND_LABELS.values(), px.colors.qualitative.Plotly))
 
 
-def show_chart(figure, *, display_mode_bar='hover'):
+def show_chart(figure):
     figure.update_layout(
         margin=dict(l=0, r=12, t=12, b=0),
         legend=dict(orientation='h', title_text='', y=-0.2, yanchor='top'),
@@ -121,7 +124,19 @@ def show_chart(figure, *, display_mode_bar='hover'):
     st.plotly_chart(
         figure,
         use_container_width=True,
-        config={'responsive': True, 'scrollZoom': False, 'displayModeBar': display_mode_bar},
+        config={'responsive': True, 'scrollZoom': False, 'displayModeBar': False},
+    )
+
+
+def figure_pdf(figure):
+    output = BytesIO()
+    figure.savefig(output, format='pdf')
+    return output.getvalue()
+
+
+def download_chart_pdf(data, file_name):
+    st.download_button(
+        'Download as a PDF', data, file_name, 'application/pdf', key=file_name, on_click='ignore',
     )
 
 
@@ -138,9 +153,30 @@ def stance_chart_pdf(shares, colors):
     axes.set(xlim=(0, 1), xlabel='Share of entries', title='Policy stances by stakeholder')
     axes.xaxis.set_major_formatter(PercentFormatter(xmax=1))
     axes.legend(loc='upper center', bbox_to_anchor=(0.5, -0.14), ncols=2, frameon=False)
-    output = BytesIO()
-    figure.savefig(output, format='pdf')
-    return output.getvalue()
+    return figure_pdf(figure)
+
+
+@st.cache_data
+def topic_chart_pdf(topics, color):
+    figure = Figure(figsize=(11.7, max(4, len(topics) * 0.45 + 1)), layout='constrained')
+    axes = figure.subplots()
+    labels = ['\n'.join(wrap(aspect, width=48)) for aspect in topics['aspect']]
+    axes.barh(labels, topics['count'], color=color)
+    axes.invert_yaxis()
+    axes.set(xlabel='Entries', title='Policy aspects mentioned')
+    axes.xaxis.set_major_locator(MaxNLocator(integer=True))
+    return figure_pdf(figure)
+
+
+@st.cache_data
+def tone_chart_pdf(entries, colors):
+    figure = Figure(figsize=(9, 6), layout='constrained')
+    axes = figure.subplots()
+    for group, points in entries.groupby('stakeholder_group', sort=False):
+        axes.scatter(points['valence'], points['arousal'], color=colors[group], alpha=.65, label=group)
+    axes.set(xlabel='Valence', ylabel='Arousal', title='Emotional tone')
+    axes.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncols=2, frameon=False)
+    return figure_pdf(figure)
 
 @st.cache_data
 def load_data():
@@ -197,33 +233,38 @@ with overview:
     fig.update_xaxes(tickformat='.0%', nticks=5)
     fig.update_yaxes(title_text=None, autorange='reversed', categoryorder='array', categoryarray=counts['chart_group'].unique())
     shares = counts.pivot(index='stakeholder_group', columns='chart_stance', values='share').fillna(0)
-    st.download_button(
-        'Download as a PDF',
-        data=stance_chart_pdf(shares, [(trace.name, trace.marker.color) for trace in fig.data]),
-        file_name='policy-stances-by-stakeholder.pdf',
-        mime='application/pdf',
+    download_chart_pdf(
+        stance_chart_pdf(shares, [(trace.name, trace.marker.color) for trace in fig.data]),
+        'policy-stances-by-stakeholder.pdf',
     )
-    show_chart(fig, display_mode_bar=False)
-    c1,c2=st.columns(2)
-    with c1:
-        st.subheader('Policy aspects mentioned')
-        topic_counts=f['policy_aspect'].value_counts().head(15).reset_index()
-        topic_counts.columns=['aspect','count']
-        topic_counts['chart_aspect'] = topic_counts['aspect'].map(lambda label: '<br>'.join(wrap(label, width=20)))
-        fig = px.bar(
-            topic_counts, x='count', y='chart_aspect', orientation='h',
-            height=max(240, len(topic_counts) * 54 + 56),
-            hover_data={'chart_aspect': False, 'aspect': True},
-            labels={'aspect': 'Policy aspect', 'count': 'Entries'},
-        )
-        fig.update_yaxes(title_text=None, categoryorder='total ascending')
-        show_chart(fig)
-    with c2:
-        st.subheader('Emotional tone')
-        show_chart(px.scatter(
-            f, x='valence', y='arousal', color='stakeholder_group',
-            hover_data=['master_id', 'policy_aspect', 'macro_stance'], opacity=.65, height=420,
-        ))
+    show_chart(fig)
+    with st.container(key='pdf-only-charts'):
+        topics, tone = st.columns(2)
+        with topics:
+            st.subheader('Policy aspects mentioned')
+            topic_counts = f['policy_aspect'].value_counts().head(15).reset_index()
+            topic_counts.columns = ['aspect', 'count']
+            topic_counts['chart_aspect'] = topic_counts['aspect'].map(lambda label: '<br>'.join(wrap(label, width=20)))
+            topic_color = px.colors.qualitative.Plotly[0]
+            fig = px.bar(
+                topic_counts, x='count', y='chart_aspect', orientation='h',
+                height=max(240, len(topic_counts) * 54 + 56),
+                color_discrete_sequence=[topic_color],
+                hover_data={'chart_aspect': False, 'aspect': True},
+                labels={'aspect': 'Policy aspect', 'count': 'Entries'},
+            )
+            fig.update_yaxes(title_text=None, categoryorder='total ascending')
+            download_chart_pdf(topic_chart_pdf(topic_counts, topic_color), 'policy-aspects.pdf')
+            show_chart(fig)
+        with tone:
+            st.subheader('Emotional tone')
+            group_colors = dict(zip(sorted(df['stakeholder_group'].dropna().unique()), px.colors.qualitative.Plotly))
+            fig = px.scatter(
+                f, x='valence', y='arousal', color='stakeholder_group', color_discrete_map=group_colors,
+                hover_data=['master_id', 'policy_aspect', 'macro_stance'], opacity=.65, height=420,
+            )
+            download_chart_pdf(tone_chart_pdf(f[['stakeholder_group', 'valence', 'arousal']], group_colors), 'emotional-tone.pdf')
+            show_chart(fig)
     st.info('Percentages describe entries in the filtered corpus, not percentages of U.S. teachers, students, or parents.')
 with evidence:
     st.subheader('Searchable source evidence')
